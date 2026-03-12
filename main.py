@@ -42,7 +42,7 @@ def get_trending_topics():
 
 def write_seo_blog_post(topics):
     genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-1.5-flash')
+    model = genai.GenerativeModel('gemini-2.0-flash')
     topics_text = '\n'.join([f"{i+1}. [{t['source']}] {t['title']}" for i, t in enumerate(topics)])
     prompt = f"""You are a world-class SEO content writer and journalist.
 

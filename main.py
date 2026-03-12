@@ -11,55 +11,49 @@ GOOGLE_REFRESH_TOKEN = os.environ['GOOGLE_REFRESH_TOKEN']
 GOOGLE_CLIENT_ID     = os.environ['GOOGLE_CLIENT_ID']
 GOOGLE_CLIENT_SECRET = os.environ['GOOGLE_CLIENT_SECRET']
 
+# Topics to skip — stale stories AI keeps picking
+BLOCKLIST = ['trump indictment', 'pleads not guilty', '34 felony', 'hush money', 'stormy daniels']
+
+def is_blocked(title):
+    t = title.lower()
+    return any(b in t for b in BLOCKLIST)
+
 def get_trending_topics():
     topics = []
 
     try:
         feed = feedparser.parse('http://feeds.bbci.co.uk/news/rss.xml')
         for entry in feed.entries[:6]:
-            topics.append({"title": entry.title, "source": "bbc_news"})
-        print(f"BBC: {len([t for t in topics if t['source']=='bbc_news'])} topics")
+            if not is_blocked(entry.title):
+                topics.append({"title": entry.title, "source": "bbc_news"})
+        print(f"BBC: added")
     except Exception as e:
         print(f"BBC failed: {e}")
 
     try:
         feed = feedparser.parse('https://feeds.reuters.com/reuters/topNews')
-        for entry in feed.entries[:5]:
-            topics.append({"title": entry.title, "source": "reuters"})
+        for entry in feed.entries[:6]:
+            if not is_blocked(entry.title):
+                topics.append({"title": entry.title, "source": "reuters"})
         print(f"Reuters: added")
     except Exception as e:
         print(f"Reuters failed: {e}")
 
-    try:
-        feed = feedparser.parse('http://rss.cnn.com/rss/edition.rss')
-        for entry in feed.entries[:5]:
-            topics.append({"title": entry.title, "source": "cnn"})
-        print(f"CNN: added")
-    except Exception as e:
-        print(f"CNN failed: {e}")
-
+    # Google News — most current, highest priority
     try:
         feed = feedparser.parse('https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en')
-        for entry in feed.entries[:8]:
-            topics.append({"title": entry.title, "source": "google_news"})
+        for entry in feed.entries[:10]:
+            if not is_blocked(entry.title):
+                topics.append({"title": entry.title, "source": "google_news"})
         print(f"Google News: added")
     except Exception as e:
         print(f"Google News failed: {e}")
 
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (compatible; AutoBlogBot/1.0)'}
-        r = requests.get('https://www.reddit.com/r/worldnews/top.json?t=day&limit=5', headers=headers, timeout=10)
-        for post in r.json()['data']['children']:
-            topics.append({"title": post['data']['title'], "source": "reddit_worldnews"})
-        print(f"Reddit worldnews: added")
-    except Exception as e:
-        print(f"Reddit failed: {e}")
-
-    try:
         r = requests.get('https://hacker-news.firebaseio.com/v0/topstories.json', timeout=10)
         for sid in r.json()[:5]:
             story = requests.get(f'https://hacker-news.firebaseio.com/v0/item/{sid}.json', timeout=5).json()
-            if story.get('title'):
+            if story.get('title') and not is_blocked(story['title']):
                 topics.append({"title": story['title'], "source": "hackernews"})
         print(f"HackerNews: added")
     except Exception as e:
@@ -74,16 +68,22 @@ def get_trending_topics():
 def write_seo_blog_post(topics):
     client = Groq(api_key=GROQ_API_KEY)
     today = datetime.utcnow().strftime('%B %d, %Y')
-    topics_text = '\n'.join([f"{i+1}. [{t['source']}] {t['title']}" for i, t in enumerate(topics)])
+    
+    # Prioritize google_news topics
+    google_topics = [t for t in topics if t['source'] == 'google_news']
+    other_topics = [t for t in topics if t['source'] != 'google_news']
+    ordered_topics = google_topics + other_topics
+    
+    topics_text = '\n'.join([f"{i+1}. [{t['source']}] {t['title']}" for i, t in enumerate(ordered_topics)])
 
-    # Step 1 — pick best topic from the list
     pick_prompt = f"""Today is {today}.
 
-Here are real headlines fetched RIGHT NOW from BBC, Reuters, CNN, Google News, Reddit:
+Here are TODAY'S real headlines:
 {topics_text}
 
-Which single headline from this exact list would get the most Google search traffic today?
-Reply with ONLY the exact headline text copied from the list above. Nothing else. No explanation."""
+Pick the single headline that would get the most Google searches TODAY.
+Prefer topics from [google_news] as they are most current.
+Reply with ONLY the exact headline text. Nothing else."""
 
     pick_response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -93,33 +93,32 @@ Reply with ONLY the exact headline text copied from the list above. Nothing else
     chosen = pick_response.choices[0].message.content.strip()
     print(f"AI chose topic: {chosen}")
 
-    # Step 2 — write full post about chosen topic
     write_prompt = f"""You are a world-class SEO journalist. Today is {today}.
 
-Write a complete 1800-word SEO blog post ONLY about this specific news story:
+Write a complete 1800-word SEO blog post about this breaking news story:
 "{chosen}"
 
 STRICT RULES:
-- Only write about THIS story — do not bring in unrelated topics
-- Title: 55-60 characters, include primary keyword naturally
+- Only write about THIS story
+- Title: 55-60 characters with primary keyword
 - First 100 words MUST contain the primary keyword
-- Use H2 subheadings that are questions people actually Google
-- Include a FAQ section at the end with 5 Q&As
-- Write like a human journalist — engaging, clear, zero fluff
+- H2 subheadings must be questions people Google about this topic
+- FAQ section at the end with 5 Q&As
+- Write like a human journalist — engaging, clear, no fluff
 - Strong surprising intro hook
-- Strong conclusion paragraph
+- Strong conclusion
 
-Return ONLY a valid JSON object. No markdown. No backticks. No extra text:
+Return ONLY valid JSON, no markdown, no backticks:
 
 {{
-  "chosen_topic": "the headline you picked",
-  "title": "SEO title 55-60 chars",
-  "meta_description": "compelling 155 char meta description with keyword",
+  "chosen_topic": "the headline",
+  "title": "SEO title",
+  "meta_description": "155 char meta description",
   "primary_keyword": "main keyword",
   "secondary_keywords": ["kw1", "kw2", "kw3", "kw4"],
-  "content": "FULL HTML post using only <h2><p><strong><ul><li> tags, NO html/body/head tags",
+  "content": "FULL HTML using <h2><p><strong><ul><li> tags only",
   "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-  "slug": "url-friendly-slug"
+  "slug": "url-slug"
 }}"""
 
     response = client.chat.completions.create(

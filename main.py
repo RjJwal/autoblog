@@ -77,13 +77,15 @@ def get_trending_topics():
 def write_seo_blog_post(topics):
     client = Groq(api_key=GROQ_API_KEY)
     topics_text = '\n'.join([f"{i+1}. [{t['source']}] {t['title']}" for i, t in enumerate(topics)])
+    today = datetime.utcnow().strftime('%B %d, %Y')
     prompt = f"""You are a world-class SEO content writer and breaking news journalist.
+
+Today's date is {today}. 
 
 Today's trending topics from BBC, Reuters, CNN, Google News, Reddit:
 {topics_text}
 
-Your job: Pick the SINGLE MOST VIRAL topic from TODAY's headlines only — must be breaking news from the last 24 hours, not old stories. Ignore anything older than today.
-
+Your job: Pick the SINGLE MOST VIRAL topic from the list above ONLY. You MUST choose from the headlines provided — do NOT invent stories or use topics from your training data. The chosen topic must come word-for-word from the list above.
 Write a complete 1800-word SEO blog post about it.
 
 STRICT SEO RULES:

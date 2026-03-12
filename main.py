@@ -131,11 +131,3 @@ if __name__ == '__main__':
     final_content = build_final_content(post)
     publish_to_blogger(post, final_content)
     print("DONE!")
-```
-
-Also update `requirements.txt` — replace everything with:
-```
-groq==0.13.0
-google-auth-oauthlib==1.2.0
-feedparser==6.0.11
-requests==2.32.3

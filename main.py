@@ -2,10 +2,10 @@ import os
 import json
 import requests
 import feedparser
-import google.generativeai as genai
+from groq import Groq
 from datetime import datetime
 
-GEMINI_API_KEY       = os.environ['GEMINI_API_KEY']
+GROQ_API_KEY         = os.environ['GROQ_API_KEY']
 BLOGGER_BLOG_ID      = os.environ['BLOGGER_BLOG_ID']
 GOOGLE_REFRESH_TOKEN = os.environ['GOOGLE_REFRESH_TOKEN']
 GOOGLE_CLIENT_ID     = os.environ['GOOGLE_CLIENT_ID']
@@ -41,8 +41,7 @@ def get_trending_topics():
     return topics
 
 def write_seo_blog_post(topics):
-    genai.configure(api_key=GEMINI_API_KEY)
-    model = genai.GenerativeModel('gemini-2.0-flash')
+    client = Groq(api_key=GROQ_API_KEY)
     topics_text = '\n'.join([f"{i+1}. [{t['source']}] {t['title']}" for i, t in enumerate(topics)])
     prompt = f"""You are a world-class SEO content writer and journalist.
 
@@ -75,8 +74,12 @@ Return ONLY a valid JSON object, no markdown, no backticks:
   "slug": "url-friendly-slug"
 }}"""
 
-    response = model.generate_content(prompt, generation_config=genai.types.GenerationConfig(temperature=0.7))
-    raw = response.text.strip()
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.7
+    )
+    raw = response.choices[0].message.content.strip()
     if raw.startswith('```'):
         raw = raw.split('```')[1]
         if raw.startswith('json'): raw = raw[4:]
@@ -128,3 +131,11 @@ if __name__ == '__main__':
     final_content = build_final_content(post)
     publish_to_blogger(post, final_content)
     print("DONE!")
+```
+
+Also update `requirements.txt` — replace everything with:
+```
+groq==0.13.0
+google-auth-oauthlib==1.2.0
+feedparser==6.0.11
+requests==2.32.3

@@ -82,7 +82,7 @@ def write_seo_blog_post(topics):
 Today's trending topics from BBC, Reuters, CNN, Google News, Reddit:
 {topics_text}
 
-Your job: Pick the SINGLE MOST VIRAL, most-searched topic right now — prefer real breaking news, major world events, celebrity news, tech launches over niche developer topics.
+Your job: Pick the SINGLE MOST VIRAL topic from TODAY's headlines only — must be breaking news from the last 24 hours, not old stories. Ignore anything older than today.
 
 Write a complete 1800-word SEO blog post about it.
 

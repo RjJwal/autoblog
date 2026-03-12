@@ -14,7 +14,6 @@ GOOGLE_CLIENT_SECRET = os.environ['GOOGLE_CLIENT_SECRET']
 def get_trending_topics():
     topics = []
 
-    # BBC News — most reliable RSS
     try:
         feed = feedparser.parse('http://feeds.bbci.co.uk/news/rss.xml')
         for entry in feed.entries[:6]:
@@ -23,7 +22,6 @@ def get_trending_topics():
     except Exception as e:
         print(f"BBC failed: {e}")
 
-    # Reuters RSS
     try:
         feed = feedparser.parse('https://feeds.reuters.com/reuters/topNews')
         for entry in feed.entries[:5]:
@@ -32,7 +30,6 @@ def get_trending_topics():
     except Exception as e:
         print(f"Reuters failed: {e}")
 
-    # CNN RSS
     try:
         feed = feedparser.parse('http://rss.cnn.com/rss/edition.rss')
         for entry in feed.entries[:5]:
@@ -41,7 +38,6 @@ def get_trending_topics():
     except Exception as e:
         print(f"CNN failed: {e}")
 
-    # Google News RSS — top stories
     try:
         feed = feedparser.parse('https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en')
         for entry in feed.entries[:8]:
@@ -50,7 +46,6 @@ def get_trending_topics():
     except Exception as e:
         print(f"Google News failed: {e}")
 
-    # Reddit worldnews
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (compatible; AutoBlogBot/1.0)'}
         r = requests.get('https://www.reddit.com/r/worldnews/top.json?t=day&limit=5', headers=headers, timeout=10)
@@ -60,7 +55,6 @@ def get_trending_topics():
     except Exception as e:
         print(f"Reddit failed: {e}")
 
-    # HackerNews
     try:
         r = requests.get('https://hacker-news.firebaseio.com/v0/topstories.json', timeout=10)
         for sid in r.json()[:5]:
@@ -71,49 +65,66 @@ def get_trending_topics():
     except Exception as e:
         print(f"HackerNews failed: {e}")
 
-    print(f"\nTotal topics collected: {len(topics)}")
+    print(f"\n=== FETCHED HEADLINES ===")
+    for i, t in enumerate(topics):
+        print(f"{i+1}. [{t['source']}] {t['title']}")
+    print(f"=== TOTAL: {len(topics)} ===\n")
     return topics
 
 def write_seo_blog_post(topics):
     client = Groq(api_key=GROQ_API_KEY)
-    topics_text = '\n'.join([f"{i+1}. [{t['source']}] {t['title']}" for i, t in enumerate(topics)])
     today = datetime.utcnow().strftime('%B %d, %Y')
-    prompt = f"""You are a world-class SEO content writer and breaking news journalist.
+    topics_text = '\n'.join([f"{i+1}. [{t['source']}] {t['title']}" for i, t in enumerate(topics)])
 
-Today's date is {today}. 
+    # Step 1 — pick best topic from the list
+    pick_prompt = f"""Today is {today}.
 
-Today's trending topics from BBC, Reuters, CNN, Google News, Reddit:
+Here are real headlines fetched RIGHT NOW from BBC, Reuters, CNN, Google News, Reddit:
 {topics_text}
 
-Your job: Pick the SINGLE MOST VIRAL topic from the list above ONLY. You MUST choose from the headlines provided — do NOT invent stories or use topics from your training data. The chosen topic must come word-for-word from the list above.
-Write a complete 1800-word SEO blog post about it.
+Which single headline from this exact list would get the most Google search traffic today?
+Reply with ONLY the exact headline text copied from the list above. Nothing else. No explanation."""
 
-STRICT SEO RULES:
-- Title: 55-60 chars, primary keyword included naturally
+    pick_response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": pick_prompt}],
+        temperature=0.1
+    )
+    chosen = pick_response.choices[0].message.content.strip()
+    print(f"AI chose topic: {chosen}")
+
+    # Step 2 — write full post about chosen topic
+    write_prompt = f"""You are a world-class SEO journalist. Today is {today}.
+
+Write a complete 1800-word SEO blog post ONLY about this specific news story:
+"{chosen}"
+
+STRICT RULES:
+- Only write about THIS story — do not bring in unrelated topics
+- Title: 55-60 characters, include primary keyword naturally
 - First 100 words MUST contain the primary keyword
-- Use H2s that are full questions people actually Google
-- Include "explained" or "what is" naturally in the post
-- Add a FAQ section at the end with 5 Q&As targeting long-tail keywords
-- Write like a smart human journalist — clear, helpful, zero fluff
-- Strong intro hook (surprising fact or question)
-- Strong conclusion
+- Use H2 subheadings that are questions people actually Google
+- Include a FAQ section at the end with 5 Q&As
+- Write like a human journalist — engaging, clear, zero fluff
+- Strong surprising intro hook
+- Strong conclusion paragraph
 
-Return ONLY a valid JSON object, no markdown, no backticks:
+Return ONLY a valid JSON object. No markdown. No backticks. No extra text:
 
 {{
-  "chosen_topic": "topic you picked",
-  "title": "SEO title here",
-  "meta_description": "155 char meta description with keyword",
+  "chosen_topic": "the headline you picked",
+  "title": "SEO title 55-60 chars",
+  "meta_description": "compelling 155 char meta description with keyword",
   "primary_keyword": "main keyword",
   "secondary_keywords": ["kw1", "kw2", "kw3", "kw4"],
-  "content": "FULL HTML post using <h2><p><strong><ul><li> tags only, NO html/body/head tags",
+  "content": "FULL HTML post using only <h2><p><strong><ul><li> tags, NO html/body/head tags",
   "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
   "slug": "url-friendly-slug"
 }}"""
 
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
+        messages=[{"role": "user", "content": write_prompt}],
         temperature=0.7
     )
     raw = response.choices[0].message.content.strip()

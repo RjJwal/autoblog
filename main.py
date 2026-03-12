@@ -13,53 +13,88 @@ GOOGLE_CLIENT_SECRET = os.environ['GOOGLE_CLIENT_SECRET']
 
 def get_trending_topics():
     topics = []
+
+    # BBC News — most reliable RSS
     try:
-        feed = feedparser.parse('https://trends.google.com/trends/trendingsearches/daily/rss?geo=US')
+        feed = feedparser.parse('http://feeds.bbci.co.uk/news/rss.xml')
+        for entry in feed.entries[:6]:
+            topics.append({"title": entry.title, "source": "bbc_news"})
+        print(f"BBC: {len([t for t in topics if t['source']=='bbc_news'])} topics")
+    except Exception as e:
+        print(f"BBC failed: {e}")
+
+    # Reuters RSS
+    try:
+        feed = feedparser.parse('https://feeds.reuters.com/reuters/topNews')
+        for entry in feed.entries[:5]:
+            topics.append({"title": entry.title, "source": "reuters"})
+        print(f"Reuters: added")
+    except Exception as e:
+        print(f"Reuters failed: {e}")
+
+    # CNN RSS
+    try:
+        feed = feedparser.parse('http://rss.cnn.com/rss/edition.rss')
+        for entry in feed.entries[:5]:
+            topics.append({"title": entry.title, "source": "cnn"})
+        print(f"CNN: added")
+    except Exception as e:
+        print(f"CNN failed: {e}")
+
+    # Google News RSS — top stories
+    try:
+        feed = feedparser.parse('https://news.google.com/rss?hl=en-US&gl=US&ceid=US:en')
         for entry in feed.entries[:8]:
-            topics.append({"title": entry.title, "source": "google_trends"})
-    except: pass
+            topics.append({"title": entry.title, "source": "google_news"})
+        print(f"Google News: added")
+    except Exception as e:
+        print(f"Google News failed: {e}")
+
+    # Reddit worldnews
     try:
-        headers = {'User-Agent': 'AutoBlogBot/1.0'}
+        headers = {'User-Agent': 'Mozilla/5.0 (compatible; AutoBlogBot/1.0)'}
         r = requests.get('https://www.reddit.com/r/worldnews/top.json?t=day&limit=5', headers=headers, timeout=10)
         for post in r.json()['data']['children']:
-            topics.append({"title": post['data']['title'], "source": "reddit"})
-    except: pass
-    try:
-        headers = {'User-Agent': 'AutoBlogBot/1.0'}
-        r = requests.get('https://www.reddit.com/r/technology/top.json?t=day&limit=5', headers=headers, timeout=10)
-        for post in r.json()['data']['children']:
-            topics.append({"title": post['data']['title'], "source": "reddit_tech"})
-    except: pass
+            topics.append({"title": post['data']['title'], "source": "reddit_worldnews"})
+        print(f"Reddit worldnews: added")
+    except Exception as e:
+        print(f"Reddit failed: {e}")
+
+    # HackerNews
     try:
         r = requests.get('https://hacker-news.firebaseio.com/v0/topstories.json', timeout=10)
         for sid in r.json()[:5]:
             story = requests.get(f'https://hacker-news.firebaseio.com/v0/item/{sid}.json', timeout=5).json()
             if story.get('title'):
                 topics.append({"title": story['title'], "source": "hackernews"})
-    except: pass
-    print(f"Total topics: {len(topics)}")
+        print(f"HackerNews: added")
+    except Exception as e:
+        print(f"HackerNews failed: {e}")
+
+    print(f"\nTotal topics collected: {len(topics)}")
     return topics
 
 def write_seo_blog_post(topics):
     client = Groq(api_key=GROQ_API_KEY)
     topics_text = '\n'.join([f"{i+1}. [{t['source']}] {t['title']}" for i, t in enumerate(topics)])
-    prompt = f"""You are a world-class SEO content writer and journalist.
+    prompt = f"""You are a world-class SEO content writer and breaking news journalist.
 
-Today's trending topics:
+Today's trending topics from BBC, Reuters, CNN, Google News, Reddit:
 {topics_text}
 
-Pick the SINGLE BEST topic for maximum Google search traffic and write a complete 1800-word SEO blog post.
+Your job: Pick the SINGLE MOST VIRAL, most-searched topic right now — prefer real breaking news, major world events, celebrity news, tech launches over niche developer topics.
+
+Write a complete 1800-word SEO blog post about it.
 
 STRICT SEO RULES:
 - Title: 55-60 chars, primary keyword included naturally
 - First 100 words MUST contain the primary keyword
-- Use H2s that are full questions people Google
-- Include exact phrase "explained" or "what is" naturally in the post
+- Use H2s that are full questions people actually Google
+- Include "explained" or "what is" naturally in the post
 - Add a FAQ section at the end with 5 Q&As targeting long-tail keywords
 - Write like a smart human journalist — clear, helpful, zero fluff
-- Add transition sentences between every section
-- Include a strong intro hook (surprising fact or question)
-- End with a strong conclusion
+- Strong intro hook (surprising fact or question)
+- Strong conclusion
 
 Return ONLY a valid JSON object, no markdown, no backticks:
 

@@ -1,6 +1,7 @@
 import os
 import json
 import time
+import re
 import requests
 import feedparser
 from groq import Groq
@@ -15,19 +16,38 @@ GOOGLE_CLIENT_SECRET = os.environ['GOOGLE_CLIENT_SECRET']
 BLOCKLIST = [
     'trump indictment', 'pleads not guilty', '34 felony',
     'hush money', 'stormy daniels', 'temporal javascript',
-    '9-year journey', 'knitting', 'common lisp', 'rails 2026'
+    '9-year journey', 'knitting', 'common lisp'
+]
+
+# Categories to rotate through for variety
+CATEGORIES = [
+    {'name': 'World News', 'sources': ['google_news', 'bbc_news', 'reuters'], 'keywords': ['war', 'iran', 'attack', 'military', 'strike', 'shooting', 'killed', 'dead', 'bomb']},
+    {'name': 'Technology', 'sources': ['hackernews', 'google_news'], 'keywords': ['ai', 'tech', 'apple', 'google', 'microsoft', 'openai', 'software', 'app']},
+    {'name': 'Economy', 'sources': ['google_news', 'reuters', 'bbc_news'], 'keywords': ['oil', 'price', 'market', 'economy', 'trade', 'inflation', 'stock', 'tariff']},
 ]
 
 def is_blocked(title):
     t = title.lower()
     return any(b in t for b in BLOCKLIST)
 
+def clean_json(raw):
+    # Remove control characters that break JSON parsing
+    raw = raw.strip()
+    if raw.startswith('```'):
+        raw = raw.split('```')[1]
+        if raw.startswith('json'):
+            raw = raw[4:]
+    raw = raw.strip()
+    # Remove invalid control characters
+    raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', raw)
+    return raw
+
 def get_trending_topics():
     topics = []
 
     try:
         feed = feedparser.parse('http://feeds.bbci.co.uk/news/rss.xml')
-        for entry in feed.entries[:6]:
+        for entry in feed.entries[:8]:
             if not is_blocked(entry.title):
                 topics.append({"title": entry.title, "source": "bbc_news"})
         print(f"BBC: added")
@@ -63,7 +83,7 @@ def get_trending_topics():
 
     try:
         r = requests.get('https://hacker-news.firebaseio.com/v0/topstories.json', timeout=10)
-        for sid in r.json()[:5]:
+        for sid in r.json()[:6]:
             story = requests.get(f'https://hacker-news.firebaseio.com/v0/item/{sid}.json', timeout=5).json()
             if story.get('title') and not is_blocked(story['title']):
                 topics.append({"title": story['title'], "source": "hackernews"})
@@ -71,105 +91,107 @@ def get_trending_topics():
     except Exception as e:
         print(f"HackerNews failed: {e}")
 
+    # Entertainment/Sports RSS for variety
+    try:
+        feed = feedparser.parse('https://www.espn.com/espn/rss/news')
+        for entry in feed.entries[:4]:
+            if not is_blocked(entry.title):
+                topics.append({"title": entry.title, "source": "espn"})
+        print(f"ESPN: added")
+    except Exception as e:
+        print(f"ESPN failed: {e}")
+
+    try:
+        feed = feedparser.parse('https://variety.com/feed/')
+        for entry in feed.entries[:4]:
+            if not is_blocked(entry.title):
+                topics.append({"title": entry.title, "source": "variety"})
+        print(f"Variety: added")
+    except Exception as e:
+        print(f"Variety failed: {e}")
+
     print(f"\n=== FETCHED HEADLINES ===")
     for i, t in enumerate(topics):
         print(f"{i+1}. [{t['source']}] {t['title']}")
     print(f"=== TOTAL: {len(topics)} ===\n")
     return topics
 
-def write_seo_blog_post(topics, used_topics=[]):
+def pick_topic_for_category(client, topics, used_topics, category_name, avoid_keywords):
+    today = datetime.utcnow().strftime('%B %d, %Y')
+    remaining = [t for t in topics if t['title'] not in used_topics]
+    topics_text = '\n'.join([f"{i+1}. [{t['source']}] {t['title']}" for i, t in enumerate(remaining)])
+    avoid_str = ', '.join(avoid_keywords)
+
+    prompt = f"""Today is {today}.
+
+Headlines:
+{topics_text}
+
+Pick ONE headline for the category: "{category_name}"
+- Avoid headlines about: {avoid_str}
+- Pick something that would get maximum Google searches today in this category
+- Reply with ONLY the exact headline text from the list. Nothing else."""
+
+    response = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2
+    )
+    return response.choices[0].message.content.strip()
+
+def write_seo_blog_post(topics, used_topics, category_name, avoid_keywords):
     client = Groq(api_key=GROQ_API_KEY)
     today = datetime.utcnow().strftime('%B %d, %Y')
 
-    remaining = [t for t in topics if t['title'] not in used_topics]
-    google_topics = [t for t in remaining if t['source'] == 'google_news']
-    other_topics  = [t for t in remaining if t['source'] != 'google_news']
-    ordered = google_topics + other_topics
-    topics_text = '\n'.join([f"{i+1}. [{t['source']}] {t['title']}" for i, t in enumerate(ordered)])
+    chosen = pick_topic_for_category(client, topics, used_topics, category_name, avoid_keywords)
+    print(f"Chosen [{category_name}]: {chosen}")
 
-    # Step 1: Pick best topic
-    pick_prompt = f"""Today is {today}.
-
-Real headlines fetched RIGHT NOW:
-{topics_text}
-
-Pick the single headline that most people would be Googling RIGHT NOW today.
-Prefer [google_news] and [bbc_news] sources. Ignore developer/niche tech topics.
-Reply with ONLY the exact headline text from the list. Nothing else."""
-
-    pick_response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": pick_prompt}],
-        temperature=0.1
-    )
-    chosen = pick_response.choices[0].message.content.strip()
-    print(f"AI chose: {chosen}")
-
-    # Step 2: Write world-class SEO post
     write_prompt = f"""You are a Pulitzer-level journalist and world-class SEO expert. Today is {today}.
 
-Write a MASTERPIECE 2000-word SEO blog post about this breaking news story:
+Write a MASTERPIECE 2000-word SEO blog post about this story:
 "{chosen}"
 
-=== 2026 SEO RULES (follow ALL of these) ===
+=== STRICT SEO RULES ===
 
-TITLE (critical):
+TITLE:
 - 55-60 characters exactly
-- Include primary long-tail keyword naturally
-- Use power words: "Explained", "What You Need to Know", "Breaking", "Here's Why", "Everything You Need to Know"
-- Make it irresistible to click
+- Include primary keyword naturally
+- Use power words: "Explained", "What You Need to Know", "Here's Why", "Everything You Need to Know", "Breaking"
 
-INTRO HOOK (first 150 words — most important):
-- Open with ONE shocking fact, surprising statistic, or bold controversial statement
+INTRO (first 150 words — MOST IMPORTANT):
+- Open with ONE shocking fact or bold statement
 - Do NOT start with "In a world..." or "Did you know..."
-- Use second person ("You") to pull reader in immediately
-- Primary keyword must appear within first 100 words naturally
-- End intro with a preview of what they'll learn — create curiosity gap
+- Use "You" to pull reader in immediately
+- Primary keyword within first 100 words
+- End with curiosity gap — tease what they will learn
 
-CONTENT STRUCTURE:
-- H2 headings must be FULL QUESTIONS people type into Google (e.g. "What Does This Mean for Oil Prices in 2026?")
-- Each section: 200-250 words, one clear idea, ends with transition to next section
-- Use <strong> to bold key facts and statistics
-- Add at least one <ul> list per post with 4-6 bullet points
-- Include real-world implications and human impact angle
-- Explain complex things in simple language (write for a smart 16-year-old)
-- Add a "What Experts Are Saying" section with attributed quotes (you can create realistic expert quotes)
-- Add a "What Happens Next" section near the end — people always search this
+STRUCTURE:
+- H2s must be EXACT questions people type into Google
+- Each section: 200-250 words, one clear idea
+- Bold key facts with <strong>
+- At least one <ul> list with 4-6 bullet points
+- "What Experts Are Saying" section with realistic expert quotes
+- "What Happens Next" section near the end
 
-LONG-TAIL KEYWORD STRATEGY:
-- Primary keyword: 1-2 words, used 8-12 times naturally
-- 4 secondary long-tail keywords: 3-5 words each, used 2-3 times each
-- Include natural variations and synonyms (semantic SEO)
-- Never stuff keywords — must read naturally
+KEYWORDS:
+- Primary keyword: used 8-12 times naturally
+- 4 secondary long-tail keywords used 2-3 times each
+- Semantic variations throughout
 
-FAQ SECTION (critical for Google featured snippets):
-- 6 Q&As minimum
-- Questions must be EXACTLY what people type into Google
-- Answers: 40-60 words each — concise, direct, complete
-- Include "when", "why", "how", "what", "who" questions
+FAQ (6 Q&As — targets Google featured snippets):
+- Questions must be exactly what people Google
+- Answers: 40-60 words, direct and complete
 
-EEAT SIGNALS (Google trusts sites that show these):
-- Mention specific dates, numbers, and statistics
-- Reference real organizations, governments, experts by name
-- Show cause-and-effect reasoning
-- Add context that shows deep understanding of the topic
+EEAT:
+- Specific dates, numbers, statistics
+- Real organizations and experts by name
+- Deep context and cause-effect reasoning
 
-SCHEMA & TECHNICAL:
-- Use only <h2><p><strong><ul><li> HTML tags
-- NO html/body/head tags
+Use only <h2><p><strong><ul><li> HTML tags.
 
-Return ONLY a valid JSON object. No markdown. No backticks. No extra text outside the JSON:
+CRITICAL: Return ONLY a single-line valid JSON. Escape ALL quotes inside strings with backslash. No newlines inside JSON string values. No markdown:
 
-{{
-  "chosen_topic": "exact headline",
-  "title": "Perfect 55-60 char SEO title with power word",
-  "meta_description": "Compelling 150-155 char description with primary keyword and clear value proposition",
-  "primary_keyword": "main 1-2 word keyword",
-  "secondary_keywords": ["long tail keyword 1", "long tail keyword 2", "long tail keyword 3", "long tail keyword 4"],
-  "content": "FULL 2000-word HTML post",
-  "tags": ["tag1", "tag2", "tag3", "tag4", "tag5"],
-  "slug": "url-friendly-slug-with-keyword"
-}}"""
+{{"chosen_topic":"headline","title":"55-60 char title","meta_description":"150-155 char description","primary_keyword":"keyword","secondary_keywords":["kw1","kw2","kw3","kw4"],"content":"FULL HTML here with all quotes escaped","tags":["t1","t2","t3","t4","t5"],"slug":"url-slug"}}"""
 
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -177,23 +199,28 @@ Return ONLY a valid JSON object. No markdown. No backticks. No extra text outsid
         temperature=0.7,
         max_tokens=4000
     )
-    raw = response.choices[0].message.content.strip()
-    if raw.startswith('```'):
-        raw = raw.split('```')[1]
-        if raw.startswith('json'): raw = raw[4:]
-    result = json.loads(raw.strip())
+    raw = clean_json(response.choices[0].message.content)
+
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError:
+        # Fallback: extract content between first { and last }
+        start = raw.find('{')
+        end = raw.rfind('}') + 1
+        raw = raw[start:end]
+        # Aggressively clean content field
+        raw = re.sub(r'"content"\s*:\s*"(.*?)"(?=\s*,\s*"tags")', 
+                     lambda m: '"content":"' + m.group(1).replace('\n', ' ').replace('\r', '') + '"',
+                     raw, flags=re.DOTALL)
+        result = json.loads(raw)
+
     result['_chosen_raw'] = chosen
     return result
 
 def build_final_content(post):
     now_iso = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-
-    # Full schema markup — NewsArticle + FAQ
     schema = f"""<script type="application/ld+json">
-{{"@context":"https://schema.org","@type":"NewsArticle","headline":"{post['title']}","description":"{post['meta_description']}","datePublished":"{now_iso}","dateModified":"{now_iso}","keywords":"{', '.join(post.get('secondary_keywords',[]))}","author":{{"@type":"Organization","name":"TrendExplained","url":"https://trendexplainednow.blogspot.com"}},"publisher":{{"@type":"Organization","name":"TrendExplained","url":"https://trendexplainednow.blogspot.com"}},"mainEntityOfPage":{{"@type":"WebPage"}}}}
-</script>
-<script type="application/ld+json">
-{{"@context":"https://schema.org","@type":"FAQPage","mainEntity":[]}}
+{{"@context":"https://schema.org","@type":"NewsArticle","headline":"{post['title']}","description":"{post['meta_description']}","datePublished":"{now_iso}","dateModified":"{now_iso}","keywords":"{', '.join(post.get('secondary_keywords',[]))}","author":{{"@type":"Organization","name":"TrendExplained","url":"https://trendexplainednow.blogspot.com"}},"publisher":{{"@type":"Organization","name":"TrendExplained","url":"https://trendexplainednow.blogspot.com"}}}}
 </script>
 <meta name="description" content="{post['meta_description']}"/>
 <meta name="keywords" content="{post['primary_keyword']}, {', '.join(post.get('secondary_keywords', []))}"/>
@@ -234,13 +261,20 @@ if __name__ == '__main__':
     print(f"Starting AutoBlog — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
     topics = get_trending_topics()
 
+    # 3 posts per run, each from a DIFFERENT category
+    post_categories = [
+        {"name": "World News & Politics", "avoid": []},
+        {"name": "Technology & Science", "avoid": ["war", "iran", "attack", "military", "shooting"]},
+        {"name": "Business, Sports or Entertainment", "avoid": ["war", "iran", "attack", "military", "shooting", "ai", "tech"]},
+    ]
+
     used_topics = []
     posts_published = 0
 
-    for i in range(3):
-        print(f"\n--- Writing post {i+1} of 3 ---")
+    for i, cat in enumerate(post_categories):
+        print(f"\n--- Writing post {i+1} of 3 [{cat['name']}] ---")
         try:
-            post = write_seo_blog_post(topics, used_topics)
+            post = write_seo_blog_post(topics, used_topics, cat['name'], cat['avoid'])
             used_topics.append(post.get('_chosen_raw', post['chosen_topic']))
             final_content = build_final_content(post)
             publish_to_blogger(post, final_content)

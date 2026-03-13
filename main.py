@@ -19,26 +19,17 @@ BLOCKLIST = [
     '9-year journey', 'knitting', 'common lisp'
 ]
 
-# Categories to rotate through for variety
-CATEGORIES = [
-    {'name': 'World News', 'sources': ['google_news', 'bbc_news', 'reuters'], 'keywords': ['war', 'iran', 'attack', 'military', 'strike', 'shooting', 'killed', 'dead', 'bomb']},
-    {'name': 'Technology', 'sources': ['hackernews', 'google_news'], 'keywords': ['ai', 'tech', 'apple', 'google', 'microsoft', 'openai', 'software', 'app']},
-    {'name': 'Economy', 'sources': ['google_news', 'reuters', 'bbc_news'], 'keywords': ['oil', 'price', 'market', 'economy', 'trade', 'inflation', 'stock', 'tariff']},
-]
-
 def is_blocked(title):
     t = title.lower()
     return any(b in t for b in BLOCKLIST)
 
 def clean_json(raw):
-    # Remove control characters that break JSON parsing
     raw = raw.strip()
     if raw.startswith('```'):
         raw = raw.split('```')[1]
         if raw.startswith('json'):
             raw = raw[4:]
     raw = raw.strip()
-    # Remove invalid control characters
     raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', raw)
     return raw
 
@@ -91,7 +82,6 @@ def get_trending_topics():
     except Exception as e:
         print(f"HackerNews failed: {e}")
 
-    # Entertainment/Sports RSS for variety
     try:
         feed = feedparser.parse('https://www.espn.com/espn/rss/news')
         for entry in feed.entries[:4]:
@@ -120,7 +110,7 @@ def pick_topic_for_category(client, topics, used_topics, category_name, avoid_ke
     today = datetime.utcnow().strftime('%B %d, %Y')
     remaining = [t for t in topics if t['title'] not in used_topics]
     topics_text = '\n'.join([f"{i+1}. [{t['source']}] {t['title']}" for i, t in enumerate(remaining)])
-    avoid_str = ', '.join(avoid_keywords)
+    avoid_str = ', '.join(avoid_keywords) if avoid_keywords else 'none'
 
     prompt = f"""Today is {today}.
 
@@ -204,12 +194,10 @@ CRITICAL: Return ONLY a single-line valid JSON. Escape ALL quotes inside strings
     try:
         result = json.loads(raw)
     except json.JSONDecodeError:
-        # Fallback: extract content between first { and last }
         start = raw.find('{')
         end = raw.rfind('}') + 1
         raw = raw[start:end]
-        # Aggressively clean content field
-        raw = re.sub(r'"content"\s*:\s*"(.*?)"(?=\s*,\s*"tags")', 
+        raw = re.sub(r'"content"\s*:\s*"(.*?)"(?=\s*,\s*"tags")',
                      lambda m: '"content":"' + m.group(1).replace('\n', ' ').replace('\r', '') + '"',
                      raw, flags=re.DOTALL)
         result = json.loads(raw)
@@ -219,9 +207,62 @@ CRITICAL: Return ONLY a single-line valid JSON. Escape ALL quotes inside strings
 
 def build_final_content(post):
     now_iso = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
-    schema = f"""<script type="application/ld+json">
-{{"@context":"https://schema.org","@type":"NewsArticle","headline":"{post['title']}","description":"{post['meta_description']}","datePublished":"{now_iso}","dateModified":"{now_iso}","keywords":"{', '.join(post.get('secondary_keywords',[]))}","author":{{"@type":"Organization","name":"TrendExplained","url":"https://trendexplainednow.blogspot.com"}},"publisher":{{"@type":"Organization","name":"TrendExplained","url":"https://trendexplainednow.blogspot.com"}}}}
-</script>
+
+    faq_entities = [
+        {
+            "@type": "Question",
+            "name": f"What is {post['primary_keyword']}?",
+            "acceptedAnswer": {
+                "@type": "Answer",
+                "text": post['meta_description']
+            }
+        },
+        {
+            "@type": "Question",
+            "name": f"Why is {post['primary_keyword']} important?",
+            "acceptedAnswer": {
+                "@type": "Answer",
+                "text": f"{post['title']} — this is one of the most searched topics today. {post['meta_description']}"
+            }
+        },
+        {
+            "@type": "Question",
+            "name": f"What are the latest updates on {post['primary_keyword']}?",
+            "acceptedAnswer": {
+                "@type": "Answer",
+                "text": f"As of {datetime.utcnow().strftime('%B %d, %Y')}, {post['meta_description']}"
+            }
+        }
+    ]
+
+    faq_schema_str = json.dumps({
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": faq_entities
+    })
+
+    news_schema_str = json.dumps({
+        "@context": "https://schema.org",
+        "@type": "NewsArticle",
+        "headline": post['title'],
+        "description": post['meta_description'],
+        "datePublished": now_iso,
+        "dateModified": now_iso,
+        "keywords": ', '.join(post.get('secondary_keywords', [])),
+        "author": {
+            "@type": "Organization",
+            "name": "TrendExplained",
+            "url": "https://trendexplainednow.blogspot.com"
+        },
+        "publisher": {
+            "@type": "Organization",
+            "name": "TrendExplained",
+            "url": "https://trendexplainednow.blogspot.com"
+        }
+    })
+
+    schema = f"""<script type="application/ld+json">{news_schema_str}</script>
+<script type="application/ld+json">{faq_schema_str}</script>
 <meta name="description" content="{post['meta_description']}"/>
 <meta name="keywords" content="{post['primary_keyword']}, {', '.join(post.get('secondary_keywords', []))}"/>
 <meta property="og:title" content="{post['title']}"/>
@@ -243,6 +284,20 @@ def get_access_token():
         raise Exception(f"Token failed: {result}")
     return result['access_token']
 
+def ping_indexnow(url):
+    try:
+        r = requests.get(
+            'https://api.indexnow.org/indexnow',
+            params={
+                'url': url,
+                'key': '5ce0a0281fb341549bbec44bda7c063c'
+            },
+            timeout=10
+        )
+        print(f"IndexNow pinged: {r.status_code}")
+    except Exception as e:
+        print(f"IndexNow failed: {e}")
+
 def publish_to_blogger(post, final_content):
     token = get_access_token()
     r = requests.post(
@@ -254,6 +309,7 @@ def publish_to_blogger(post, final_content):
     result = r.json()
     if 'url' in result:
         print(f"PUBLISHED: {result['url']}")
+        ping_indexnow(result['url'])
         return result['url']
     raise Exception(f"Failed: {result}")
 
@@ -261,7 +317,6 @@ if __name__ == '__main__':
     print(f"Starting AutoBlog — {datetime.utcnow().strftime('%Y-%m-%d %H:%M UTC')}")
     topics = get_trending_topics()
 
-    # 3 posts per run, each from a DIFFERENT category
     post_categories = [
         {"name": "World News & Politics", "avoid": []},
         {"name": "Technology & Science", "avoid": ["war", "iran", "attack", "military", "shooting"]},

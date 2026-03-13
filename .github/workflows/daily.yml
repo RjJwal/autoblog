@@ -21,4 +21,5 @@ jobs:
           GOOGLE_CLIENT_ID:      ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET:  ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GROQ_API_KEY:          ${{ secrets.GROQ_API_KEY }}
+          UNSPLASH_ACCESS_KEY:   ${{ secrets.UNSPLASH_ACCESS_KEY }}
         run: python main.py

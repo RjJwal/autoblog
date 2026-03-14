@@ -471,12 +471,3 @@ if __name__ == '__main__':
             continue
 
     print(f"\nDONE! Published {posts_published}/3 posts this run.")
-```
-
-Also update `requirements.txt`:
-```
-groq==0.13.0
-google-auth==2.29.0
-google-auth-oauthlib==1.2.0
-feedparser==6.0.11
-requests==2.32.3

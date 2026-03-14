@@ -6,6 +6,9 @@ import requests
 import feedparser
 from groq import Groq
 from datetime import datetime
+import google.auth
+from google.oauth2 import service_account
+from google.auth.transport.requests import Request
 
 GROQ_API_KEY          = os.environ['GROQ_API_KEY']
 BLOGGER_BLOG_ID       = os.environ['BLOGGER_BLOG_ID']
@@ -13,6 +16,7 @@ GOOGLE_REFRESH_TOKEN  = os.environ['GOOGLE_REFRESH_TOKEN']
 GOOGLE_CLIENT_ID      = os.environ['GOOGLE_CLIENT_ID']
 GOOGLE_CLIENT_SECRET  = os.environ['GOOGLE_CLIENT_SECRET']
 UNSPLASH_ACCESS_KEY   = os.environ['UNSPLASH_ACCESS_KEY']
+GOOGLE_INDEXING_SA    = os.environ['GOOGLE_INDEXING_SA']
 
 HARD_BLOCKLIST = [
     'trump indictment', 'pleads not guilty', '34 felony',
@@ -34,26 +38,43 @@ def clean_json(raw):
     raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', raw)
     return raw
 
+def get_indexing_token():
+    sa_info = json.loads(GOOGLE_INDEXING_SA)
+    credentials = service_account.Credentials.from_service_account_info(
+        sa_info,
+        scopes=['https://www.googleapis.com/auth/indexing']
+    )
+    credentials.refresh(Request())
+    return credentials.token
+
+def auto_index_url(url):
+    try:
+        token = get_indexing_token()
+        r = requests.post(
+            'https://indexing.googleapis.com/v3/urlNotifications:publish',
+            headers={
+                'Authorization': f'Bearer {token}',
+                'Content-Type': 'application/json'
+            },
+            json={'url': url, 'type': 'URL_UPDATED'},
+            timeout=15
+        )
+        print(f"Google Indexing API: {r.status_code} — {url}")
+    except Exception as e:
+        print(f"Auto-index failed: {e}")
+
 def get_unsplash_image(query):
     try:
         r = requests.get(
             'https://api.unsplash.com/search/photos',
-            params={
-                'query': query,
-                'per_page': 1,
-                'orientation': 'landscape'
-            },
+            params={'query': query, 'per_page': 1, 'orientation': 'landscape'},
             headers={'Authorization': f'Client-ID {UNSPLASH_ACCESS_KEY}'},
             timeout=10
         )
         data = r.json()
         if data.get('results'):
             photo = data['results'][0]
-            img_url = photo['urls']['regular']
-            photographer = photo['user']['name']
-            photo_link = photo['links']['html']
-            print(f"Image found: {img_url[:50]}...")
-            return img_url, photographer, photo_link
+            return photo['urls']['regular'], photo['user']['name'], photo['links']['html']
     except Exception as e:
         print(f"Unsplash failed: {e}")
     return None, None, None
@@ -93,8 +114,7 @@ def is_duplicate(title, existing_titles):
     keywords = set(title_lower.split()) - stopwords
     for existing in existing_titles:
         existing_keywords = set(existing.split()) - stopwords
-        overlap = keywords & existing_keywords
-        if len(overlap) >= 3:
+        if len(keywords & existing_keywords) >= 3:
             return True
     return False
 
@@ -106,7 +126,7 @@ def get_trending_topics():
         for entry in feed.entries[:8]:
             if not is_blocked(entry.title):
                 topics.append({"title": entry.title, "source": "bbc_news"})
-        print(f"BBC: added")
+        print("BBC: added")
     except Exception as e:
         print(f"BBC failed: {e}")
 
@@ -115,7 +135,7 @@ def get_trending_topics():
         for entry in feed.entries[:6]:
             if not is_blocked(entry.title):
                 topics.append({"title": entry.title, "source": "reuters"})
-        print(f"Reuters: added")
+        print("Reuters: added")
     except Exception as e:
         print(f"Reuters failed: {e}")
 
@@ -124,7 +144,7 @@ def get_trending_topics():
         for entry in feed.entries[:12]:
             if not is_blocked(entry.title):
                 topics.append({"title": entry.title, "source": "google_news"})
-        print(f"Google News: added")
+        print("Google News: added")
     except Exception as e:
         print(f"Google News failed: {e}")
 
@@ -133,7 +153,7 @@ def get_trending_topics():
         for entry in feed.entries[:5]:
             if not is_blocked(entry.title):
                 topics.append({"title": entry.title, "source": "sky_news"})
-        print(f"Sky News: added")
+        print("Sky News: added")
     except Exception as e:
         print(f"Sky News failed: {e}")
 
@@ -142,7 +162,7 @@ def get_trending_topics():
         for entry in feed.entries[:6]:
             if not is_blocked(entry.title):
                 topics.append({"title": entry.title, "source": "techcrunch"})
-        print(f"TechCrunch: added")
+        print("TechCrunch: added")
     except Exception as e:
         print(f"TechCrunch failed: {e}")
 
@@ -151,7 +171,7 @@ def get_trending_topics():
         for entry in feed.entries[:5]:
             if not is_blocked(entry.title):
                 topics.append({"title": entry.title, "source": "theverge"})
-        print(f"The Verge: added")
+        print("The Verge: added")
     except Exception as e:
         print(f"The Verge failed: {e}")
 
@@ -161,7 +181,7 @@ def get_trending_topics():
             story = requests.get(f'https://hacker-news.firebaseio.com/v0/item/{sid}.json', timeout=5).json()
             if story.get('title') and not is_blocked(story['title']):
                 topics.append({"title": story['title'], "source": "hackernews"})
-        print(f"HackerNews: added")
+        print("HackerNews: added")
     except Exception as e:
         print(f"HackerNews failed: {e}")
 
@@ -170,7 +190,7 @@ def get_trending_topics():
         for entry in feed.entries[:4]:
             if not is_blocked(entry.title):
                 topics.append({"title": entry.title, "source": "espn"})
-        print(f"ESPN: added")
+        print("ESPN: added")
     except Exception as e:
         print(f"ESPN failed: {e}")
 
@@ -179,7 +199,7 @@ def get_trending_topics():
         for entry in feed.entries[:4]:
             if not is_blocked(entry.title):
                 topics.append({"title": entry.title, "source": "variety"})
-        print(f"Variety: added")
+        print("Variety: added")
     except Exception as e:
         print(f"Variety failed: {e}")
 
@@ -303,7 +323,7 @@ HTML tags only: <h2><p><strong><ul><li>
 
 CRITICAL: Return ONLY single-line valid JSON. Escape ALL quotes in strings. No newlines in values. No markdown:
 
-{{"chosen_topic":"topic","title":"55-60 char title","meta_description":"150-155 char description","primary_keyword":"keyword","secondary_keywords":["kw1","kw2","kw3","kw4"],"image_search_query":"3 word image search query for this topic","content":"FULL HTML","tags":["t1","t2","t3","t4","t5"],"slug":"url-slug"}}"""
+{{"chosen_topic":"topic","title":"55-60 char title","meta_description":"150-155 char description","primary_keyword":"keyword","secondary_keywords":["kw1","kw2","kw3","kw4"],"image_search_query":"3 word image search query","content":"FULL HTML","tags":["t1","t2","t3","t4","t5"],"slug":"url-slug"}}"""
 
     response = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
@@ -330,11 +350,9 @@ CRITICAL: Return ONLY single-line valid JSON. Escape ALL quotes in strings. No n
 def build_final_content(post):
     now_iso = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
 
-    # Fetch image from Unsplash
     image_query = post.get('image_search_query', post['primary_keyword'])
     img_url, photographer, photo_link = get_unsplash_image(image_query)
 
-    # Build hero image HTML
     if img_url:
         hero_image = f"""<div style="margin-bottom:24px;">
 <img src="{img_url}" alt="{post['title']}" style="width:100%;max-width:100%;border-radius:8px;"/>
@@ -413,9 +431,11 @@ def publish_to_blogger(post, final_content):
     )
     result = r.json()
     if 'url' in result:
-        print(f"PUBLISHED: {result['url']}")
-        ping_indexnow(result['url'])
-        return result['url']
+        url = result['url']
+        print(f"PUBLISHED: {url}")
+        ping_indexnow(url)
+        auto_index_url(url)
+        return url
     raise Exception(f"Failed: {result}")
 
 if __name__ == '__main__':
@@ -451,3 +471,12 @@ if __name__ == '__main__':
             continue
 
     print(f"\nDONE! Published {posts_published}/3 posts this run.")
+```
+
+Also update `requirements.txt`:
+```
+groq==0.13.0
+google-auth==2.29.0
+google-auth-oauthlib==1.2.0
+feedparser==6.0.11
+requests==2.32.3

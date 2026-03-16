@@ -86,7 +86,6 @@ def get_access_token():
         'grant_type': 'refresh_token'
     }, timeout=15)
     result = r.json()
-    print(f"Token response: {json.dumps({k: v for k, v in result.items() if k != 'access_token'})}")
     if 'access_token' not in result:
         raise Exception(f"Token failed: {result}")
     return result['access_token']
@@ -227,7 +226,7 @@ Brainstorm ONE trending topic in "{category_name}" that:
 Reply with ONLY the topic title. Nothing else."""
 
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama3-8b-8192",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.9
     )
@@ -257,7 +256,7 @@ If NO headline fits this category well, reply with exactly: BRAINSTORM
 Otherwise reply with ONLY the exact headline text."""
 
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama3-8b-8192",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2
     )
@@ -321,15 +320,15 @@ EEAT SIGNALS:
 
 HTML tags only: <h2><p><strong><ul><li>
 
-CRITICAL: Return ONLY single-line valid JSON. Escape ALL quotes in strings. No newlines in values. No markdown:
+CRITICAL: Return ONLY single-line valid JSON. Escape ALL quotes in strings. No newlines in values. No markdown. No backslashes except for escaping quotes:
 
 {{"chosen_topic":"topic","title":"55-60 char title","meta_description":"150-155 char description","primary_keyword":"keyword","secondary_keywords":["kw1","kw2","kw3","kw4"],"image_search_query":"3 word image search query","content":"FULL HTML","tags":["t1","t2","t3","t4","t5"],"slug":"url-slug"}}"""
 
     response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
+        model="llama3-8b-8192",
         messages=[{"role": "user", "content": write_prompt}],
         temperature=0.7,
-        max_tokens=4000
+        max_tokens=3000
     )
     raw = clean_json(response.choices[0].message.content)
 
@@ -340,7 +339,7 @@ CRITICAL: Return ONLY single-line valid JSON. Escape ALL quotes in strings. No n
         end = raw.rfind('}') + 1
         raw = raw[start:end]
         raw = re.sub(r'"content"\s*:\s*"(.*?)"(?=\s*,\s*"tags")',
-                     lambda m: '"content":"' + m.group(1).replace('\n', ' ').replace('\r', '') + '"',
+                     lambda m: '"content":"' + m.group(1).replace('\n', ' ').replace('\r', '').replace('\\', '') + '"',
                      raw, flags=re.DOTALL)
         result = json.loads(raw)
 

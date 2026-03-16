@@ -6,7 +6,6 @@ import requests
 import feedparser
 from groq import Groq
 from datetime import datetime
-import google.auth
 from google.oauth2 import service_account
 from google.auth.transport.requests import Request
 
@@ -59,7 +58,7 @@ def auto_index_url(url):
             json={'url': url, 'type': 'URL_UPDATED'},
             timeout=15
         )
-        print(f"Google Indexing API: {r.status_code} — {url}")
+        print(f"Google Indexing API: {r.status_code}")
     except Exception as e:
         print(f"Auto-index failed: {e}")
 
@@ -87,6 +86,7 @@ def get_access_token():
         'grant_type': 'refresh_token'
     }, timeout=15)
     result = r.json()
+    print(f"Token response: {json.dumps({k: v for k, v in result.items() if k != 'access_token'})}")
     if 'access_token' not in result:
         raise Exception(f"Token failed: {result}")
     return result['access_token']

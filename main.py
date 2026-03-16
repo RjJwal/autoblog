@@ -226,7 +226,7 @@ Brainstorm ONE trending topic in "{category_name}" that:
 Reply with ONLY the topic title. Nothing else."""
 
     response = client.chat.completions.create(
-        model="llama3-8b-8192",
+        model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.9
     )
@@ -256,7 +256,7 @@ If NO headline fits this category well, reply with exactly: BRAINSTORM
 Otherwise reply with ONLY the exact headline text."""
 
     response = client.chat.completions.create(
-        model="llama3-8b-8192",
+        model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": prompt}],
         temperature=0.2
     )
@@ -325,7 +325,7 @@ CRITICAL: Return ONLY single-line valid JSON. Escape ALL quotes in strings. No n
 {{"chosen_topic":"topic","title":"55-60 char title","meta_description":"150-155 char description","primary_keyword":"keyword","secondary_keywords":["kw1","kw2","kw3","kw4"],"image_search_query":"3 word image search query","content":"FULL HTML","tags":["t1","t2","t3","t4","t5"],"slug":"url-slug"}}"""
 
     response = client.chat.completions.create(
-        model="llama3-8b-8192",
+        model="llama-3.1-8b-instant",
         messages=[{"role": "user", "content": write_prompt}],
         temperature=0.7,
         max_tokens=3000

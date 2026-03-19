@@ -1,6 +1,5 @@
 import os
 import json
-import time
 import re
 import requests
 import feedparser
@@ -24,18 +23,7 @@ HARD_BLOCKLIST = [
 ]
 
 def is_blocked(title):
-    t = title.lower()
-    return any(b in t for b in HARD_BLOCKLIST)
-
-def clean_json(raw):
-    raw = raw.strip()
-    if raw.startswith('```'):
-        raw = raw.split('```')[1]
-        if raw.startswith('json'):
-            raw = raw[4:]
-    raw = raw.strip()
-    raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', raw)
-    return raw
+    return any(b in title.lower() for b in HARD_BLOCKLIST)
 
 def get_indexing_token():
     sa_info = json.loads(GOOGLE_INDEXING_SA)
@@ -51,8 +39,7 @@ def auto_index_url(url):
         r = requests.post(
             'https://indexing.googleapis.com/v3/urlNotifications:publish',
             headers={'Authorization': f'Bearer {token}', 'Content-Type': 'application/json'},
-            json={'url': url, 'type': 'URL_UPDATED'},
-            timeout=15
+            json={'url': url, 'type': 'URL_UPDATED'}, timeout=15
         )
         print(f"Google Indexing API: {r.status_code}")
     except Exception as e:
@@ -63,8 +50,7 @@ def get_unsplash_image(query):
         r = requests.get(
             'https://api.unsplash.com/search/photos',
             params={'query': query, 'per_page': 1, 'orientation': 'landscape'},
-            headers={'Authorization': f'Client-ID {UNSPLASH_ACCESS_KEY}'},
-            timeout=10
+            headers={'Authorization': f'Client-ID {UNSPLASH_ACCESS_KEY}'}, timeout=10
         )
         data = r.json()
         if data.get('results'):
@@ -92,24 +78,20 @@ def get_existing_post_titles():
         r = requests.get(
             f'https://www.googleapis.com/blogger/v3/blogs/{BLOGGER_BLOG_ID}/posts',
             headers={'Authorization': f'Bearer {token}'},
-            params={'maxResults': 40, 'fields': 'items(title)'},
-            timeout=15
+            params={'maxResults': 40, 'fields': 'items(title)'}, timeout=15
         )
-        items = r.json().get('items', [])
-        titles = [item['title'].lower() for item in items]
-        print(f"Existing posts fetched: {len(titles)}")
+        titles = [item['title'].lower() for item in r.json().get('items', [])]
+        print(f"Existing posts: {len(titles)}")
         return titles
     except Exception as e:
         print(f"Could not fetch existing posts: {e}")
         return []
 
 def is_duplicate(title, existing_titles):
-    title_lower = title.lower()
     stopwords = {'the','a','an','is','in','on','at','to','for','of','and','or','but','what','why','how','who','when','where'}
-    keywords = set(title_lower.split()) - stopwords
+    keywords = set(title.lower().split()) - stopwords
     for existing in existing_titles:
-        existing_keywords = set(existing.split()) - stopwords
-        if len(keywords & existing_keywords) >= 3:
+        if len(keywords & (set(existing.split()) - stopwords)) >= 3:
             return True
     return False
 
@@ -137,9 +119,9 @@ def get_trending_topics():
     try:
         r = requests.get('https://hacker-news.firebaseio.com/v0/topstories.json', timeout=10)
         for sid in r.json()[:6]:
-            story = requests.get(f'https://hacker-news.firebaseio.com/v0/item/{sid}.json', timeout=5).json()
-            if story.get('title') and not is_blocked(story['title']):
-                topics.append({"title": story['title'], "source": "hackernews"})
+            s = requests.get(f'https://hacker-news.firebaseio.com/v0/item/{sid}.json', timeout=5).json()
+            if s.get('title') and not is_blocked(s['title']):
+                topics.append({"title": s['title'], "source": "hackernews"})
         print("HackerNews: added")
     except Exception as e:
         print(f"HackerNews failed: {e}")
@@ -149,45 +131,34 @@ def get_trending_topics():
     print(f"=== TOTAL: {len(topics)} ===\n")
     return topics
 
-def brainstorm_topic(client, category_name, existing_titles, today):
-    existing_str = '\n'.join(existing_titles[:20]) if existing_titles else 'none yet'
-    prompt = f"""Today is {today}. You are an expert SEO content strategist.
-Category: "{category_name}"
-Already covered (do NOT repeat):
-{existing_str}
-Brainstorm ONE trending topic in "{category_name}" that people are searching for RIGHT NOW in 2026.
-Reply with ONLY the topic title. Nothing else."""
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.9
-    )
-    topic = response.choices[0].message.content.strip()
-    print(f"AI brainstormed [{category_name}]: {topic}")
-    return topic
-
 def pick_topic(client, topics, existing_titles, category_name, avoid_keywords, today):
     remaining = [t for t in topics if not is_duplicate(t['title'], existing_titles)]
     if not remaining:
-        return brainstorm_topic(client, category_name, existing_titles, today), True
+        # Brainstorm
+        existing_str = '\n'.join(existing_titles[:15]) if existing_titles else 'none'
+        r = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": f"Today is {today}. Brainstorm ONE trending topic for category '{category_name}'. Already covered:\n{existing_str}\nReply with topic title only."}],
+            temperature=0.9, max_tokens=50
+        )
+        return r.choices[0].message.content.strip(), True
+
     topics_text = '\n'.join([f"{i+1}. [{t['source']}] {t['title']}" for i, t in enumerate(remaining)])
     avoid_str = ', '.join(avoid_keywords) if avoid_keywords else 'none'
-    prompt = f"""Today is {today}.
-Headlines:
-{topics_text}
-Category: "{category_name}"
-Avoid: {avoid_str}
-Pick ONE headline fitting "{category_name}" with max Google searches today.
-If nothing fits, reply: BRAINSTORM
-Otherwise reply with ONLY the exact headline."""
-    response = client.chat.completions.create(
+    r = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.2
+        messages=[{"role": "user", "content": f"Today is {today}.\nHeadlines:\n{topics_text}\nCategory: {category_name}\nAvoid: {avoid_str}\nPick ONE headline with max Google searches. Reply BRAINSTORM if nothing fits, else reply with exact headline only."}],
+        temperature=0.2, max_tokens=100
     )
-    chosen = response.choices[0].message.content.strip()
-    if chosen == 'BRAINSTORM' or len(chosen) > 200:
-        return brainstorm_topic(client, category_name, existing_titles, today), True
+    chosen = r.choices[0].message.content.strip()
+    if 'BRAINSTORM' in chosen or len(chosen) > 200:
+        existing_str = '\n'.join(existing_titles[:15]) if existing_titles else 'none'
+        r2 = client.chat.completions.create(
+            model="llama-3.3-70b-versatile",
+            messages=[{"role": "user", "content": f"Today is {today}. Brainstorm ONE trending topic for '{category_name}'. Already covered:\n{existing_str}\nReply with topic title only."}],
+            temperature=0.9, max_tokens=50
+        )
+        return r2.choices[0].message.content.strip(), True
     return chosen, False
 
 def write_post(topics, existing_titles, category_name, avoid_keywords):
@@ -196,51 +167,66 @@ def write_post(topics, existing_titles, category_name, avoid_keywords):
     chosen, is_brainstormed = pick_topic(client, topics, existing_titles, category_name, avoid_keywords, today)
     print(f"Writing [{category_name}]: {chosen} ({'brainstormed' if is_brainstormed else 'from news'})")
 
-    prompt = f"""You are a Pulitzer-level journalist and SEO expert. Today is {today}.
+    # Step 1: Write the article as plain HTML
+    article_prompt = f"""You are a Pulitzer-level journalist and SEO expert. Today is {today}.
+
 Write a 2000-word SEO blog post about: "{chosen}"
 
-TITLE: 55-60 chars, primary keyword, power word (Explained/Breaking/What You Need to Know)
-INTRO: shocking fact, use "You", primary keyword in first 100 words, curiosity gap ending
-H2s: exact questions people Google
-STRUCTURE: bold key facts, one ul list with 4-6 items, What Experts Say section, What Happens Next section
-KEYWORDS: primary 8-12 times, 4 secondary keywords 2-3 times each
-FAQ: 6 Q&As targeting featured snippets, 40-60 word answers
-EEAT: specific dates, stats, named experts and organizations
-HTML only: h2, p, strong, ul, li tags
+Rules:
+- Title: 55-60 chars, primary keyword, use power word (Explained/Breaking/What You Need to Know)  
+- Intro: shocking fact, use "You", keyword in first 100 words, curiosity gap
+- H2s: exact questions people Google
+- Include: bold key facts, bullet list, What Experts Say, What Happens Next
+- FAQ section: 6 Q&As, 40-60 word answers
+- EEAT: specific dates, stats, named experts
+- HTML tags only: h2, p, strong, ul, li
 
-Return ONLY valid single-line JSON, no markdown, escape all quotes:
-{{"chosen_topic":"topic","title":"title","meta_description":"155 char description","primary_keyword":"keyword","secondary_keywords":["k1","k2","k3","k4"],"image_search_query":"3 words","content":"HTML","tags":["t1","t2","t3","t4","t5"],"slug":"slug"}}"""
+Write the full article now:"""
 
-    response = client.chat.completions.create(
+    article_r = client.chat.completions.create(
         model="llama-3.3-70b-versatile",
-        messages=[{"role": "user", "content": prompt}],
-        temperature=0.7,
-        max_tokens=3500
+        messages=[{"role": "user", "content": article_prompt}],
+        temperature=0.7, max_tokens=3500
     )
-    raw = clean_json(response.choices[0].message.content)
-    try:
-        result = json.loads(raw)
-    except json.JSONDecodeError:
-        start = raw.find('{')
-        end = raw.rfind('}') + 1
-        raw = raw[start:end]
-        raw = re.sub(r'"content"\s*:\s*"(.*?)"(?=\s*,\s*"tags")',
-                     lambda m: '"content":"' + m.group(1).replace('\n',' ').replace('\r','') + '"',
-                     raw, flags=re.DOTALL)
-        result = json.loads(raw)
-    result['_chosen_raw'] = chosen
-    return result
+    article_html = article_r.choices[0].message.content.strip()
+
+    # Step 2: Extract metadata separately — much smaller JSON, no content inside
+    meta_prompt = f"""For this article topic: "{chosen}"
+Today is {today}.
+
+Return ONLY this JSON (no markdown, no backticks):
+{{"title":"SEO title 55-60 chars","meta_description":"155 char description","primary_keyword":"main keyword","secondary_keywords":["k1","k2","k3","k4"],"image_search_query":"3 word query","tags":["t1","t2","t3","t4","t5"],"slug":"url-slug"}}"""
+
+    meta_r = client.chat.completions.create(
+        model="llama-3.3-70b-versatile",
+        messages=[{"role": "user", "content": meta_prompt}],
+        temperature=0.3, max_tokens=300
+    )
+    meta_raw = meta_r.choices[0].message.content.strip()
+    if meta_raw.startswith('```'):
+        meta_raw = meta_raw.split('```')[1]
+        if meta_raw.startswith('json'):
+            meta_raw = meta_raw[4:]
+    meta_raw = meta_raw.strip()
+    meta = json.loads(meta_raw)
+    meta['content'] = article_html
+    meta['chosen_topic'] = chosen
+    return meta
 
 def build_content(post):
     now_iso = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%SZ')
     img_url, photographer, photo_link = get_unsplash_image(post.get('image_search_query', post['primary_keyword']))
+
     hero = f"""<div style="margin-bottom:24px;"><img src="{img_url}" alt="{post['title']}" style="width:100%;border-radius:8px;"/><p style="font-size:12px;color:#888;margin-top:4px;">Photo by <a href="{photo_link}" target="_blank">{photographer}</a> on <a href="https://unsplash.com" target="_blank">Unsplash</a></p></div>""" if img_url else ""
+
     faq = json.dumps({"@context":"https://schema.org","@type":"FAQPage","mainEntity":[
         {"@type":"Question","name":f"What is {post['primary_keyword']}?","acceptedAnswer":{"@type":"Answer","text":post['meta_description']}},
         {"@type":"Question","name":f"Why is {post['primary_keyword']} important?","acceptedAnswer":{"@type":"Answer","text":f"{post['title']} - one of today's most searched topics. {post['meta_description']}"}},
         {"@type":"Question","name":f"What are the latest updates on {post['primary_keyword']}?","acceptedAnswer":{"@type":"Answer","text":f"As of {datetime.utcnow().strftime('%B %d, %Y')}, {post['meta_description']}"}}
     ]})
+
     news = json.dumps({"@context":"https://schema.org","@type":"NewsArticle","headline":post['title'],"description":post['meta_description'],"datePublished":now_iso,"dateModified":now_iso,"image":img_url or "","keywords":', '.join(post.get('secondary_keywords',[])),"author":{"@type":"Organization","name":"TrendExplained","url":"https://trendexplainednow.blogspot.com"},"publisher":{"@type":"Organization","name":"TrendExplained","url":"https://trendexplainednow.blogspot.com"}})
+
     schema = f"""<script type="application/ld+json">{news}</script>
 <script type="application/ld+json">{faq}</script>
 <meta name="description" content="{post['meta_description']}"/>
